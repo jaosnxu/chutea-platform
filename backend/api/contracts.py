@@ -9,7 +9,7 @@ DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 DEEPSEEK_MODEL = "deepseek-chat"
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 
-UPLOAD_DIR = os.getenv("UPLOAD_DIR", "/Users/xuyongwenmacbookpro/workspace/p002-contract-platform/data")
+UPLOAD_DIR = os.getenv("UPLOAD_DIR", "/tmp/contract-data")
 STORAGE_FILE = os.path.join(UPLOAD_DIR, "contracts.json")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
