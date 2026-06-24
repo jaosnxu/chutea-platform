@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { USERS } from './data'
 
-const API = ''
+const API = 'https://chutea-platform.onrender.com'
 
 export default function App() {
   const [contracts, setContracts] = useState([])
