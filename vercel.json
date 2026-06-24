@@ -1,0 +1,7 @@
+{
+  "buildCommand": null,
+  "outputDirectory": "frontend",
+  "routes": [
+    { "src": "/api/(.*)", "dest": "https://contract-platform-api.onrender.com/api/$1" }
+  ]
+}
