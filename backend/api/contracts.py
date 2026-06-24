@@ -1,120 +1,97 @@
-"""
-合同审核 API
-"""
-from fastapi import APIRouter, UploadFile, File, HTTPException
+"""合同审核 API — DeepSeek AI"""
+import requests, json, os
+from fastapi import APIRouter
 from pydantic import BaseModel
-from datetime import datetime
-import os
-import json
 
 router = APIRouter(prefix="/api/contracts", tags=["contracts"])
 
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
+DEEPSEEK_MODEL = "deepseek-chat"
+DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+
 UPLOAD_DIR = os.getenv("UPLOAD_DIR", "/Users/xuyongwenmacbookpro/workspace/p002-contract-platform/data")
 STORAGE_FILE = os.path.join(UPLOAD_DIR, "contracts.json")
-
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
+
 def _load():
-    if not os.path.exists(STORAGE_FILE):
-        return []
-    with open(STORAGE_FILE) as f:
-        return json.load(f)
+    if not os.path.exists(STORAGE_FILE): return []
+    with open(STORAGE_FILE) as f: return json.load(f)
+
 
 def _save(data):
-    with open(STORAGE_FILE, "w") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    with open(STORAGE_FILE, "w") as f: json.dump(data, f, ensure_ascii=False, indent=2)
 
 
-class ReviewRequest(BaseModel):
-    contract_id: int
-    selections: dict  # {clause_id: "A"|"B"}
-
-
-class ApprovalRequest(BaseModel):
-    contract_id: int
-    step: int
-    action: str  # approve / reject
-    comment: str = ""
+class AnalyzeRequest(BaseModel):
+    text: str
+    filename: str = ""
 
 
 class ContractSave(BaseModel):
-    id: str
-    name: str
-    content: str = ""
-    status: str = "draft"
-    selections: dict = {}
-    notes: dict = {}
-    approval_status: str = ""
-    approval_id: str = ""
+    id: str; name: str; content: str = ""; status: str = "draft"
+    selections: dict = {}; notes: dict = {}
+    approval_status: str = ""; approval_id: str = ""
 
 
-@router.post("/upload")
-async def upload_contract(file: UploadFile = File(...)):
-    """上传合同文件"""
-    content = await file.read()
-    return {
-        "filename": file.filename,
-        "size": len(content),
-        "status": "uploaded",
-        "uploaded_at": datetime.now().isoformat(),
+SYSTEM_PROMPT = """Ты — эксперт по договорному праву РФ. Твой анализ основан на Гражданском кодексе РФ (редакция 2026 года).
+
+Для каждого значимого пункта договора предоставь СТРОГО JSON:
+{
+  "clauses": [
+    {
+      "id": "номер статьи (например 6.19)",
+      "title": "название статьи на русском",
+      "original": "оригинальный текст из договора",
+      "ai_analysis": "правовой анализ на основе ГК РФ 2026 с указанием конкретных статей",
+      "optionA": "вариант А — максимальная защита интересов Сублицензиата",
+      "optionB": "вариант Б — сбалансированный, справедливый",
+      "optionC": "вариант В — позиция контрагента (что предложит другая сторона)",
+      "risk": "high / med / low"
     }
+  ]
+}
+
+Правила:
+- Анализируй ТОЛЬКО пункты, имеющие пространство для переговоров
+- Пропускай определения и технические детали
+- Для каждого пункта дай 3 варианта (A/B/C)
+- Вариант А должен быть наиболее выгодным для Сублицензиата (твоя сторона)
+- Указывай конкретные статьи ГК РФ
+- Верни ТОЛЬКО JSON, без пояснений, без markdown"""
+
+
+@router.post("/analyze")
+def analyze_contract(req: AnalyzeRequest):
+    if not DEEPSEEK_API_KEY:
+        return {"error": "DEEPSEEK_API_KEY not configured", "clauses": []}
+    try:
+        resp = requests.post(
+            f"{DEEPSEEK_BASE_URL}/chat/completions",
+            headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
+            json={"model": DEEPSEEK_MODEL, "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": req.text[:30000]}
+            ], "temperature": 0.3, "max_tokens": 8000},
+            timeout=120)
+        data = resp.json()
+        content = data["choices"][0]["message"]["content"].strip()
+        if content.startswith("```"): content = content.split("\n", 1)[1].rstrip("`").strip()
+        return json.loads(content)
+    except Exception as e:
+        return {"error": str(e), "clauses": []}
 
 
 @router.post("/save")
 def save_contract(contract: ContractSave):
-    """保存合同到本地 JSON"""
     all_contracts = _load()
-    # 更新或新增
     for i, c in enumerate(all_contracts):
         if c["id"] == contract.id:
-            all_contracts[i] = contract.model_dump()
-            _save(all_contracts)
-            return {"status": "updated", "id": contract.id}
-    all_contracts.append(contract.model_dump())
-    _save(all_contracts)
-    return {"status": "saved", "id": contract.id}
+            all_contracts[i] = contract.model_dump(); _save(all_contracts)
+            return {"status": "updated"}
+    all_contracts.append(contract.model_dump()); _save(all_contracts)
+    return {"status": "saved"}
 
 
 @router.get("/list")
-def list_contracts():
-    """获取所有已保存的合同"""
-    return _load()
-
-
-@router.get("/{contract_id}")
-def get_contract(contract_id: str):
-    """获取单个合同"""
-    all_contracts = _load()
-    for c in all_contracts:
-        if c["id"] == contract_id:
-            return c
-    return {}
-
-
-@router.delete("/{contract_id}")
-def delete_contract(contract_id: str):
-    """删除合同"""
-    all_contracts = _load()
-    all_contracts = [c for c in all_contracts if c["id"] != contract_id]
-    _save(all_contracts)
-    return {"status": "deleted", "id": contract_id}
-
-
-@router.post("/{contract_id}/analyze")
-async def analyze_contract(contract_id: int):
-    return {"status": "analyzing", "contract_id": contract_id}
-
-
-@router.post("/{contract_id}/select")
-async def select_options(contract_id: int, req: ReviewRequest):
-    return {"status": "rewriting", "contract_id": contract_id, "selections": req.selections}
-
-
-@router.get("/{contract_id}/audit")
-async def second_audit(contract_id: int):
-    return {"status": "audited", "contract_id": contract_id}
-
-
-@router.post("/{contract_id}/approve")
-async def approve_contract(contract_id: int, req: ApprovalRequest):
-    return {"status": req.action, "contract_id": contract_id, "step": req.step, "comment": req.comment}
+def list_contracts(): return _load()
